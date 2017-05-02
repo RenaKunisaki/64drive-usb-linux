@@ -7,7 +7,7 @@
 *.log
 *.gen
 __pycache__
-DMG_ROM.bin
+64drive
 
 # from https://github.com/github/gitignore
 # Object files
