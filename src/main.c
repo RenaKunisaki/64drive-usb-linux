@@ -390,7 +390,7 @@ void show_help() {
     printf(
         "64drive USB tool for Linux\n"
         "by Rena, 2017 May 02\n"
-        // XXX URL
+        "https://github.com/RenaKunisaki/64drive-usb-linux\n"
         "based on original USB tool by marshallh:\n"
         "http://64drive.retroactive.be/support.php\n"
         "\n"
