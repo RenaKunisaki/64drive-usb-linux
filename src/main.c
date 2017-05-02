@@ -230,9 +230,6 @@ uint32_t offset, int bank) {
      *  size:   Size to download.
      *  offset: Offset to download from.
      *  bank:   Bank to download from.
-     *
-     * XXX with some sizes (eg 256), read fails. why?
-     * also the device sometimes doesn't respond correctly after dumping.
      */
 
     if(size < 0) {
@@ -407,7 +404,7 @@ void show_help() {
         "(default: 0)\n"
         "  -q, --quiet:         be quiet (no progress indicators)\n"
         "  -s, --size SIZE:     up/download specified size "
-        "(default: entire file)\n"
+        "(default: entire file) - must be multiple of 512\n"
         "  -v, --verbose:       be verbose (repeat for more verbosity)\n"
         "\n"
         "CIC is one of: 6101 6102 (NTSC)\n"
