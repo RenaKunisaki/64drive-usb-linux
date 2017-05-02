@@ -1,0 +1,47 @@
+# misc/temp files
+**/~*
+**/bin/*
+**/build/*
+**/old/*
+**/roms/*
+*.log
+*.gen
+__pycache__
+DMG_ROM.bin
+
+# from https://github.com/github/gitignore
+# Object files
+*.elf
+*.ko
+*.o
+*.obj
+
+# Libraries
+*.a
+*.la
+*.lib
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.dylib
+*.so
+*.so.*
+
+# Executables and data files
+*.app
+*.exe
+*.gb
+*.gba
+*.gbc
+*.hex
+*.i*86
+*.iso
+*.n64
+*.nes
+*.out
+*.sfc
+*.smc
+*.v64
+*.x86_64
+*.z64
