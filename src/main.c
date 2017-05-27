@@ -158,7 +158,7 @@ int device_get_version(sixtyfourDrive *device) {
         if(magic == DEV_MAGIC) break;
 
         if(verbosity > 0) {
-            fprintf(stderr, " * incorrect magic 0x%08X, expected 0x%08X\n",
+            fprintf(stderr, " ! incorrect magic 0x%08X, expected 0x%08X\n",
                 magic, DEV_MAGIC);
         }
 
@@ -203,7 +203,7 @@ uint32_t offset, int bank) {
     else if(size > 2 * 1024 * 1024) chunkSize = 16;
     else chunkSize = 4;
     if(verbosity > 1) printf(" * Chunk size: %d => %d\n",
-        chunkSize, chunkSize * 128 * 1024);
+        chunkSize, (chunkSize * 128 * 1024) & 0xffffff);
     chunkSize *= 128 * 1024; // convert to megabytes
     if(chunkSize > size) chunkSize = size;
 
@@ -221,14 +221,25 @@ uint32_t offset, int bank) {
         return err;
     }
 
-    if(verbosity > 0) printf(" * Uploading %" PRId64 " Kbytes\n", size / 1024);
+    if(verbosity > 0) {
+        printf(" * Uploading %" PRId64 " Kbytes to offset 0x%06X\n",
+            size / 1024, offset);
+    }
     for(int64_t readPos=0; readPos<size;) {
         fread(buffer, chunkSize, 1, file);
 
         uint32_t params[2] = {offset, (chunkSize & 0xffffff) | bank << 24};
         device_send_cmd(device, DEV_CMD_LOADRAM, 2, params, NULL, 0);
 
-        int nSent = ftdi_write_data(device->ftdi, buffer, chunkSize);
+        int nSent = -1;
+        for(int tries=0; tries<5; tries++) {
+            nSent = ftdi_write_data(device->ftdi, buffer, chunkSize);
+            if(nSent > 0) break;
+
+            //wait, flush, retry
+            usleep(10000);
+            ftdi_usb_purge_buffers(device->ftdi);
+        }
         if(nSent <= 0) {
             fprintf(stderr, "\ndevice_upload() write failed "
                 "(after %" PRId64 " bytes): %s\n", readPos,
@@ -293,7 +304,15 @@ uint32_t offset, int bank) {
         uint32_t params[2] = {offset, (chunkSize & 0xffffff) | bank << 24};
         device_send_cmd(device, DEV_CMD_DUMPRAM, 2, params, NULL, 0);
 
-        int nRecv = ftdi_read_data(device->ftdi, buffer, chunkSize);
+        int nRecv = -1;
+        for(int tries=0; tries<5; tries++) {
+            nRecv = ftdi_read_data(device->ftdi, buffer, chunkSize);
+            if(nRecv > 0) break;
+
+            //wait, flush, retry
+            usleep(10000);
+            ftdi_usb_purge_buffers(device->ftdi);
+        }
         if(nRecv <= 0) {
             fprintf(stderr, "\ndevice_download() read failed "
                 "(after %" PRId64 " bytes): %s\n", readPos,
