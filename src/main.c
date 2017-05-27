@@ -456,6 +456,10 @@ void show_help() {
         "\n"
         "-b sets the bank for ALL following up/downloads (until another -b).\n"
         "-o and -s set the offset and size for ONLY THE NEXT up/download.\n"
+        "\n"
+        "Args are processed in the order given, so eg:\n"
+        "  64drive -l file.sav -b eeprom\n"
+        "will upload file.sav to ROM, not EEPROM.\n"
     );
 }
 
