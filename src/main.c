@@ -143,12 +143,31 @@ int device_get_version(sixtyfourDrive *device) {
         return err;
     }
 
-    uint32_t *data = (uint32_t*)response;
-    uint32_t magic = swap_endian(data[1]);
-    if(magic != DEV_MAGIC) {
-        fprintf(stderr, "incorrect magic 0x%08X, expected 0x%08X\n",
-            magic, DEV_MAGIC);
-        return -1;
+    int tries = 0;
+    while(1) {
+        int err = device_send_cmd(device, DEV_CMD_GETVER, 0, NULL,
+            response, sizeof(response));
+        if(err <= 0) {
+            fprintf(stderr, "device_get_version() failed: %s\n",
+                ftdi_get_error_string(device->ftdi));
+            return err;
+        }
+
+        uint32_t *data = (uint32_t*)response;
+        uint32_t magic = swap_endian(data[1]);
+        if(magic == DEV_MAGIC) break;
+
+        if(verbosity > 0) {
+            fprintf(stderr, " * incorrect magic 0x%08X, expected 0x%08X\n",
+                magic, DEV_MAGIC);
+        }
+
+        if(++tries >= 4) {
+            fprintf(stderr,
+                "\nCommunication failure.\n"
+                "Unplug USB cable, turn off N64, then try again.\n");
+            return -1;
+        }
     }
 
     /* if(verbosity > 0) {
@@ -188,17 +207,22 @@ uint32_t offset, int bank) {
     chunkSize *= 128 * 1024; // convert to megabytes
     if(chunkSize > size) chunkSize = size;
 
-    uint8_t buffer[chunkSize];
+    uint8_t *buffer = (uint8_t*)malloc(chunkSize);
+    if(!buffer) {
+        fprintf(stderr, "device_upload(): out of memory\n");
+        return -1;
+    }
 
     int err = ftdi_write_data_set_chunksize(device->ftdi, chunkSize);
     if(err) {
         fprintf(stderr, "device_upload() set chunk size failed: %s\n",
             ftdi_get_error_string(device->ftdi));
+        free(buffer);
         return err;
     }
 
     if(verbosity > 0) printf(" * Uploading %" PRId64 " Kbytes\n", size / 1024);
-    for(uint32_t readPos=0; readPos<size;) {
+    for(int64_t readPos=0; readPos<size;) {
         fread(buffer, chunkSize, 1, file);
 
         uint32_t params[2] = {offset, (chunkSize & 0xffffff) | bank << 24};
@@ -206,8 +230,10 @@ uint32_t offset, int bank) {
 
         int nSent = ftdi_write_data(device->ftdi, buffer, chunkSize);
         if(nSent <= 0) {
-            fprintf(stderr, "device_upload() write failed: %s\n",
+            fprintf(stderr, "\ndevice_upload() write failed "
+                "(after %" PRId64 " bytes): %s\n", readPos,
                 ftdi_get_error_string(device->ftdi));
+            free(buffer);
             return nSent;
         }
 
@@ -219,6 +245,7 @@ uint32_t offset, int bank) {
         }
     }
     if(verbosity >= 0) printf("\r * Uploading... Done.\n");
+    free(buffer);
     return 0;
 }
 
@@ -247,24 +274,31 @@ uint32_t offset, int bank) {
     chunkSize *= 128 * 1024; // convert to megabytes
     if(chunkSize > size) chunkSize = size;
 
-    uint8_t buffer[chunkSize];
+    uint8_t *buffer = (uint8_t*)malloc(chunkSize);
+    if(!buffer) {
+        fprintf(stderr, "device_download(): out of memory\n");
+        return -1;
+    }
 
     int err = ftdi_read_data_set_chunksize(device->ftdi, chunkSize);
     if(err) {
         fprintf(stderr, "device_download() set chunk size failed: %s\n",
             ftdi_get_error_string(device->ftdi));
+        free(buffer);
         return err;
     }
 
     if(verbosity > 0) printf(" * Downloading %" PRId64 " Kbytes\n", size / 1024);
-    for(uint32_t readPos=0; readPos<size;) {
+    for(int64_t readPos=0; readPos<size;) {
         uint32_t params[2] = {offset, (chunkSize & 0xffffff) | bank << 24};
         device_send_cmd(device, DEV_CMD_DUMPRAM, 2, params, NULL, 0);
 
         int nRecv = ftdi_read_data(device->ftdi, buffer, chunkSize);
         if(nRecv <= 0) {
-            fprintf(stderr, "device_download() read failed: %s\n",
+            fprintf(stderr, "\ndevice_download() read failed "
+                "(after %" PRId64 " bytes): %s\n", readPos,
                 ftdi_get_error_string(device->ftdi));
+            free(buffer);
             return nRecv;
         }
         fwrite(buffer, nRecv, 1, file);
@@ -277,6 +311,7 @@ uint32_t offset, int bank) {
         }
     }
     if(verbosity >= 0) printf("\r * Downloading... Done.\n");
+    free(buffer);
     return 0;
 }
 
