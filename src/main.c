@@ -33,17 +33,19 @@ static struct {
 static struct {
     int num;
     int cic;
+    uint32_t crc32; //of bootcode
     const char *desc;
-} cic_types[] = {
-    {6101, CIC_6101, "Star Fox"},
-    {6102, CIC_6102, "most NTSC games"},
-    {7101, CIC_7101, "most PAL games"},
-    {7102, CIC_7102, "Lylat Wars"},
-    { 103, CIC_X103, "covers 6103 and 7103"},
-    { 105, CIC_X105, "covers 6105 and 7105"},
-    { 106, CIC_X106, "covers 6106 and 7106"},
-    {5101, CIC_5101, "Aleck64"},
-    {0, 0, NULL}
+} cic_types[] = { //XXX missing CRCs
+    {6101, CIC_6101, 0x6170A4A1, "Star Fox"},
+    {6102, CIC_6102, 0x90BB6CB5, "most NTSC games"},
+    {7101, CIC_7101, 0xFFFFFFFF, "most PAL games"},
+    {7102, CIC_7102, 0xFFFFFFFF, "Lylat Wars"},
+    { 103, CIC_X103, 0x0B050EE0, "covers 6103 and 7103"},
+    { 105, CIC_X105, 0x98BC2C86, "covers 6105 and 7105"},
+    { 106, CIC_X106, 0xACC8580A, "covers 6106 and 7106"},
+    {5101, CIC_5101, 0xFFFFFFFF, "Aleck64"},
+    //8303: JP 64DD (not dumped)
+    {0, 0, 0, NULL}
 };
 
 uint32_t swap_endian(uint32_t val) {
@@ -57,6 +59,46 @@ uint32_t swap_endian(uint32_t val) {
 int fail_ftdi(struct ftdi_context* ftdi, const char *msg) {
     fprintf(stderr, "%s: %s\n", msg, ftdi_get_error_string(ftdi));
     return EXIT_FAILURE;
+}
+
+
+uint32_t crc32(const uint8_t *data, size_t len) {
+    //copied from http://n64dev.org/n64crc.html
+
+    static uint32_t crc_table[256];
+    static int isInit = 0;
+    if(!isInit) { //generate CRC table
+        uint32_t poly = 0xEDB88320;
+        for(int i = 0; i < 256; i++) {
+            uint32_t crc = i;
+            for(int j = 8; j > 0; j--) {
+                if (crc & 1) crc = (crc >> 1) ^ poly;
+                else crc >>= 1;
+            }
+            crc_table[i] = crc;
+        }
+        isInit = 1;
+    }
+
+    uint32_t crc = ~0;
+	for(size_t i = 0; i < len; i++) {
+		crc = (crc >> 8) ^ crc_table[(crc ^ data[i]) & 0xFF];
+	}
+	return ~crc;
+}
+
+
+int get_cic(FILE *rom) {
+    //copied from http://n64dev.org/n64crc.html
+    uint8_t data[0xFC0];
+    fseek(rom, 0x40, SEEK_SET);
+    fread(data, 1, sizeof(data), rom); //read bootcode
+    uint32_t crc = crc32(data, sizeof(data));
+    if(verbosity > 0) printf(" * Bootcode CRC32: 0x%08X\n", crc);
+    for(int i=0; cic_types[i].num; i++) {
+        if(cic_types[i].crc32 == crc) return i;
+    }
+    return -1;
 }
 
 
@@ -137,7 +179,8 @@ int device_get_version(sixtyfourDrive *device) {
     int err = device_send_cmd(device, DEV_CMD_GETVER, 0, NULL,
         response, sizeof(response));
     if(err <= 0) {
-        fprintf(stderr, "device_get_version() failed: %s\n",
+        fprintf(stderr, "device_get_version() failed: %s\n"
+            "Try unplugging 64drive USB cable and turning off console.\n",
             ftdi_get_error_string(device->ftdi));
         return err;
     }
@@ -340,7 +383,9 @@ int device_set_cic(sixtyfourDrive *device, int cic) {
         return -1;
     }
 
-    if(verbosity > 0) printf(" * Selecting CIC mode #%d\n", cic);
+    if(verbosity > 0) {
+        printf(" * Selecting CIC %d (#%d)\n", cic_types[cic].num, cic);
+    }
 
     uint32_t param = (1 << 31) | cic;
     return device_send_cmd(device, DEV_CMD_SETCIC, 1, &param, NULL, 0);
@@ -461,7 +506,9 @@ void show_help() {
         "(default: entire file)\n"
         "      (must be multiple of 512)\n"
         "\n"
-        "CIC is one of:\n");
+        "CIC is one of:\n"
+        "  auto (use before -l)\n"
+    );
     for(int i=0; i<CIC_LAST; i++) {
         printf("  %4d (%s)\n", cic_types[i].num, cic_types[i].desc);
     }
@@ -501,6 +548,7 @@ int main(int argc, char **argv) {
 
     int bank = BANK_CARTROM;
     int64_t fileSize = -1, fileOffset = 0;
+    int autoCIC = 0;
 
     if(argc < 2) {
         show_help();
@@ -536,21 +584,26 @@ int main(int argc, char **argv) {
 
             case 'c': { //set CIC
                 int cic = -1;
-                int num = atoi(optarg);
-                for(int i=0; cic_types[i].num; i++) {
-                    if((cic_types[i].num == num)
-                    || (num < CIC_LAST && num == i)) {
-                        //check for num == i for compatibility
-                        //with Windows version; eg 3 = 7102
-                        cic = cic_types[i].cic;
-                        setup_or_die(&device);
-                        device_set_cic(&device, cic_types[i].cic);
-                        break;
-                    }
+                if(!strcmp(optarg, "auto")) {
+                    autoCIC = 1;
                 }
-                if(cic < 0) {
-                    fprintf(stderr, "Invalid CIC\n");
-                    return EXIT_FAILURE;
+                else {
+                    int num = atoi(optarg);
+                    for(int i=0; cic_types[i].num; i++) {
+                        if((cic_types[i].num == num)
+                        || (num < CIC_LAST && num == i)) {
+                            //check for num == i for compatibility
+                            //with Windows version; eg 3 = 7102
+                            cic = cic_types[i].cic;
+                            setup_or_die(&device);
+                            device_set_cic(&device, cic_types[i].cic);
+                            break;
+                        }
+                    }
+                    if(cic < 0) {
+                        fprintf(stderr, "Invalid CIC\n");
+                        return EXIT_FAILURE;
+                    }
                 }
                 break;
             }
@@ -598,6 +651,23 @@ int main(int argc, char **argv) {
                         strerror(errno));
                     break;
                 }
+
+                if(autoCIC) {
+                    if(verbosity > 1) printf(" * Identifying CIC...\n");
+                    int cic = get_cic(file);
+                    if(cic < 0) {
+                        fprintf(stderr, " ! Auto CIC selection failed - "
+                            "unrecognized bootcode.\n");
+                    }
+                    else {
+                        if(verbosity > 0) {
+                            printf(" * Auto detected CIC: %d\n",
+                                cic_types[cic].num);
+                        }
+                        device_set_cic(&device, cic_types[cic].cic);
+                    }
+                }
+
                 device_upload(&device, file, fileSize, fileOffset, bank);
                 fclose(file);
                 fileSize = -1;
