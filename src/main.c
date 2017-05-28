@@ -21,7 +21,7 @@ static struct {
     const char *name;
     int bank;
 } banks[] = {
-    {"rom",    BANK_CARTROM},
+    {"rom",     BANK_CARTROM},
     {"sram256", BANK_SRAM256},
     {"sram768", BANK_SRAM768},
     {"flash",   BANK_FLASHRAM1M},
@@ -35,17 +35,16 @@ static struct {
     int cic;
     const char *desc;
 } cic_types[] = {
-    {6101, CIC_6101, "6101 (NTSC)"},
-    {6102, CIC_6102, "6102 (NTSC)"},
-    {7101, CIC_7101, "7101 (PAL)"},
-    {7102, CIC_7102, "7102 (PAL)"},
-    { 103, CIC_X103, "x103 (All)"},
-    { 105, CIC_X105, "x105 (All)"},
-    { 106, CIC_X106, "x106 (All)"},
-    {5101, CIC_5101, "5101 (NTSC)"},
+    {6101, CIC_6101, "Star Fox"},
+    {6102, CIC_6102, "most NTSC games"},
+    {7101, CIC_7101, "most PAL games"},
+    {7102, CIC_7102, "Lylat Wars"},
+    { 103, CIC_X103, "covers 6103 and 7103"},
+    { 105, CIC_X105, "covers 6105 and 7105"},
+    { 106, CIC_X106, "covers 6106 and 7106"},
+    {5101, CIC_5101, "Aleck64"},
     {0, 0, NULL}
 };
-
 
 uint32_t swap_endian(uint32_t val) {
     return ((val << 24)) |
@@ -447,24 +446,27 @@ void show_help() {
         "\n"
         "usage: 64drive options...\n"
         "options:\n"
-        "  -b, --bank BANK:     up/download to specified bank (default: rom)\n"
-        "  -c, --cic  CIC:      set CIC type (HW2 RevB only)\n"
-        "  -d, --dump FILE:     download file from cartridge\n"
-        "  -h, --help:          show help and exit\n"
-        "  -i, --info:          show device info (version)\n"
-        "  -l, --load FILE:     upload file to cartridge\n"
-        "  -L, --list-devices:  list FTDI devices\n"
-        "  -o, --offset OFFSET: upload to/download from specified offset "
+        "  -b, --bank BANK      up/download to specified bank (default: rom)\n"
+        "  -c, --cic  CIC       set CIC type (HW2 RevB only)\n"
+        "  -d, --dump FILE      download file from cartridge\n"
+        "  -h, --help           show help and exit\n"
+        "  -i, --info           show device info (version)\n"
+        "  -l, --load FILE      upload file to cartridge\n"
+        "  -L, --list-devices   list FTDI devices\n"
+        "  -o, --offset OFFSET  upload to/download from specified offset "
         "(default: 0)\n"
-        "  -q, --quiet:         be quiet (no progress indicators)\n"
-        "  -s, --size SIZE:     up/download specified size "
-        "(default: entire file) - must be multiple of 512\n"
-        "  -v, --verbose:       be verbose (repeat for more verbosity)\n"
+        "  -q, --quiet          be quiet (no progress indicators)\n"
+        "  -v, --verbose        be verbose (repeat for more verbosity)\n"
+        "  -z, --size SIZE      up/download specified size "
+        "(default: entire file)\n"
+        "      (must be multiple of 512)\n"
         "\n"
-        "CIC is one of: 6101 6102 (NTSC)\n"
-        "               7101 7102 (PAL)\n"
-        "                103  105  106 (any)\n"
-        "               5101 (NTSC)\n"
+        "CIC is one of:\n");
+    for(int i=0; i<CIC_LAST; i++) {
+        printf("  %4d (%s)\n", cic_types[i].num, cic_types[i].desc);
+    }
+    printf(
+        "  CIC must be set correctly for the game to work.\n"
         "\n"
         "BANK is one of: rom, sram256, sram768, flash, pokemon, eeprom\n"
         " -\"pokemon\" is special-case flash for Pokemon Stadium 2\n"
@@ -477,10 +479,11 @@ void show_help() {
         "-o and -s set the offset and size for ONLY THE NEXT up/download.\n"
         "\n"
         "Args are processed in the order given, so eg:\n"
-        "  64drive -l file.sav -b eeprom\n"
-        "will upload file.sav to ROM, not EEPROM.\n"
+        "  64drive -l file.rom -b eeprom -l file.sav\n"
+        "will upload file.rom to ROM and file.sav to EEPROM.\n"
     );
 }
+
 
 
 void setup_or_die(sixtyfourDrive *device) {
@@ -518,17 +521,27 @@ int main(int argc, char **argv) {
                     }
                 }
                 if(bank < 0) {
-                    fprintf(stderr, "Invalid bank\n");
-                    return EXIT_FAILURE;
+                    bank = atoi(optarg);
+                    if(bank < 0 || bank >= BANK_LAST) { //Windows version compat
+                        fprintf(stderr, "Invalid bank\n");
+                        return EXIT_FAILURE;
+                    }
                 }
                 break;
             }
+
+            //B: update bootloader (not implemented)
+            //in Windows version it's small b, but I already used that for bank
+            //which is a much more commonly used option.
 
             case 'c': { //set CIC
                 int cic = -1;
                 int num = atoi(optarg);
                 for(int i=0; cic_types[i].num; i++) {
-                    if(cic_types[i].num == num) {
+                    if((cic_types[i].num == num)
+                    || (num < CIC_LAST && num == i)) {
+                        //check for num == i for compatibility
+                        //with Windows version; eg 3 = 7102
                         cic = cic_types[i].cic;
                         setup_or_die(&device);
                         device_set_cic(&device, cic_types[i].cic);
@@ -559,6 +572,8 @@ int main(int argc, char **argv) {
                 fileOffset = 0;
                 break;
             }
+
+            //f: update firmware (not implemented)
 
             case 'h': //help
                 show_help();
@@ -611,13 +626,16 @@ int main(int argc, char **argv) {
                 verbosity = -1;
                 break;
 
-            case 's': //set size
-                fileSize = strtoul(optarg, NULL, 0); //XXX detect error
-                //printf("fileSize = %d\n", fileSize);
-                break;
+            //s: set save emulation type (not implemented)
+            //was set size in old versions (changed to z)
 
             case 'v': //verbose
                 verbosity++;
+                break;
+
+            case 'z': //set size
+                fileSize = strtoul(optarg, NULL, 0); //XXX detect error
+                //printf("fileSize = %d\n", fileSize);
                 break;
 
             default:
