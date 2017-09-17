@@ -401,6 +401,7 @@ int device_open(sixtyfourDrive *device) {
     } devices[] = {
         {0x0403, 0x6014, 2, "64drive USB device"},
         {0x0403, 0x6010, 1, "64drive USB device A"},
+        {0x0403, 0x6010, 1, "64drive USB device"},
         {0, 0, 0, NULL}
     };
 
