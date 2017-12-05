@@ -304,12 +304,13 @@ uint32_t offset, int bank) {
 
 
 int device_download(sixtyfourDrive *device, FILE *file, int64_t size,
-uint32_t offset, int bank) {
+uint32_t offset, int bank, bool standalone) {
     /** Download file from device.
-     *  file:   File to write to.
-     *  size:   Size to download.
-     *  offset: Offset to download from.
-     *  bank:   Bank to download from.
+     *  file:       File to write to.
+     *  size:       Size to download.
+     *  offset:     Offset to download from.
+     *  bank:       Bank to download from.
+     *  standalone: Standalone mode, i.e. read from attached cartridge
      */
 
     if(size < 0) {
@@ -319,12 +320,13 @@ uint32_t offset, int bank) {
 
     //determine ideal chunk size
     uint32_t chunkSize;
-    if(size > 16 * 1024 * 1024) chunkSize = 32;
+    if(standalone) chunkSize = 512;
+    else if(size > 16 * 1024 * 1024) chunkSize = 32;
     else if(size > 2 * 1024 * 1024) chunkSize = 16;
     else chunkSize = 4;
     if(verbosity > 1) printf(" * Chunk size: %d => %d\n",
         chunkSize, chunkSize * 128 * 1024);
-    chunkSize *= 128 * 1024; // convert to megabytes
+    if(!standalone) chunkSize *= 128 * 1024; // convert to megabytes for RAM dump
     if(chunkSize > size) chunkSize = size;
 
     uint8_t *buffer = (uint8_t*)malloc(chunkSize);
@@ -342,9 +344,20 @@ uint32_t offset, int bank) {
     }
 
     if(verbosity > 0) printf(" * Downloading %" PRId64 " Kbytes\n", size / 1024);
+    if (standalone) {
+        if(verbosity > 0) printf(" * Entering standalone mode\n");
+        uint8_t response[4];
+        device_send_cmd(device, DEV_CMD_STD_ENTER, 0, NULL, response, sizeof(response));
+    }
+
     for(int64_t readPos=0; readPos<size;) {
-        uint32_t params[2] = {offset, (chunkSize & 0xffffff) | bank << 24};
-        device_send_cmd(device, DEV_CMD_DUMPRAM, 2, params, NULL, 0);
+        if(standalone) {
+            uint32_t params[2] = {offset | 0x10 << 24, chunkSize/4};
+            device_send_cmd(device, DEV_CMD_PI_RD_BURST, 2, params, NULL, 0);
+        } else {
+            uint32_t params[2] = {offset, (chunkSize & 0xffffff) | bank << 24};
+            device_send_cmd(device, DEV_CMD_DUMPRAM, 2, params, NULL, 0);
+        }
 
         int nRecv = -1;
         for(int tries=0; tries<5; tries++) {
@@ -372,6 +385,11 @@ uint32_t offset, int bank) {
         }
     }
     if(verbosity >= 0) printf("\r * Downloading... Done.\n");
+    if(standalone) {
+        if (verbosity > 0) printf(" * Leaving standalone mode");
+        uint8_t response[4];
+        device_send_cmd(device, DEV_CMD_STD_LEAVE, 0, NULL, response, sizeof(response));
+    }
     free(buffer);
     return 0;
 }
@@ -558,7 +576,7 @@ int main(int argc, char **argv) {
 
     while(1) {
         int c = getopt_long(argc, argv,
-            "b:c:d:hil:Lo:qs:v", long_options, NULL);
+            "b:c:d:D:z:hil:Lo:qs:v", long_options, NULL);
         if(c < 0) break;
         switch(c) {
             case 'b': { //specify bank
@@ -608,8 +626,8 @@ int main(int argc, char **argv) {
                 }
                 break;
             }
-
-            case 'd': { //dump
+            case 'D': //dump real cartridge
+            case 'd': { //dump RAM
                 setup_or_die(&device);
 
                 FILE *file;
@@ -620,7 +638,7 @@ int main(int argc, char **argv) {
                         strerror(errno));
                     break;
                 }
-                device_download(&device, file, fileSize, fileOffset, bank);
+                device_download(&device, file, fileSize, fileOffset, bank, c == 'D');
                 fclose(file);
                 fileSize = -1;
                 fileOffset = 0;
